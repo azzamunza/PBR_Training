@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Generated dataset (large — don't track)
+PBR_Dataset/
+
+# Render cache
+_render_cache/
+
+# GUI config (user-specific)
+GUI.config
+
+# HDR test files (large binaries)
+HDR_Exposure_Test/
+
+# Substance archives (large binaries — track with Git LFS or exclude)
+*.sbsar
+
+# Debug utilities
+debug_checker.py
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+*.code-workspace
