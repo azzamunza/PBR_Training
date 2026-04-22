@@ -133,8 +133,15 @@ CHANNEL_NAMES = [
 ]
 
 # ── CSV column order ──────────────────────────────────────────────────────────
-CSV_COLUMNS = ["seed", "folder_path"] + CHANNEL_NAMES + \
-              [f"renderball_{a['label']}" for a in RENDERBALL_ANGLES]
+def _build_csv_columns():
+    cols = ["seed", "folder_path"] + CHANNEL_NAMES
+    for a in RENDERBALL_ANGLES:
+        lbl = a["label"]
+        cols += [f"renderball_{lbl}", f"renderball_{lbl}_azimuth",
+                f"renderball_{lbl}_elevation", f"renderball_{lbl}_exposure"]
+    return cols
+
+CSV_COLUMNS = _build_csv_columns()
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║                          INTERNAL HELPERS                               ║
@@ -403,10 +410,10 @@ def render_sphere_preview(channel_map: dict, seed: str,
                           azimuth_deg: float = 0.0,
                           elevation_deg: float = 38.0,
                           suffix: str = "",
-                          env_override: str = "") -> str:
+                          env_override: str = "") -> tuple[str, float]:
     """
     GPU path-traced PBR shaderball render with camera orbit and HDR environment.
-    Returns the saved renderball file path.
+    Returns (saved_file_path, exposure_used).
     env_override: if set, use this HDR path instead of the channel_map environment.
     """
     pt = _init_gpu_renderer()
@@ -494,7 +501,7 @@ def render_sphere_preview(channel_map: dict, seed: str,
     tag = f"_{suffix}" if suffix else ""
     out_path = seed_folder(seed) / f"{seed}_renderball{tag}.{OUTPUT_FORMAT}"
     Image.fromarray((np.clip(image, 0, 1) * 255).astype(np.uint8)).save(str(out_path))
-    return str(out_path)
+    return str(out_path), pt._exposure
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -599,31 +606,35 @@ def main() -> None:
         print(f"  ✓ Channels: {', '.join(found_channels)}")
 
         # ── Render sphere previews (multiple angles) ─────────────────────
-        rb_paths = {}
+        rb_info = {}  # label → {"path": ..., "azimuth": ..., "elevation": ..., "exposure": ...}
         for angle_cfg in RENDERBALL_ANGLES:
             label = angle_cfg["label"]
+            az = angle_cfg["azimuth_deg"]
+            el = angle_cfg.get("elevation_deg", 38.0)
             try:
-                p = render_sphere_preview(
+                p, exposure = render_sphere_preview(
                     channels, seed,
-                    azimuth_deg=angle_cfg["azimuth_deg"],
-                    elevation_deg=angle_cfg.get("elevation_deg", 38.0),
+                    azimuth_deg=az,
+                    elevation_deg=el,
                     suffix=label,
                 )
-                rb_paths[label] = p
+                rb_info[label] = {"path": p, "azimuth": az, "elevation": el, "exposure": exposure}
                 print(f"  ✓ Renderball ({label}): {Path(p).name}")
             except Exception as exc:
-                rb_paths[label] = ""
+                rb_info[label] = {"path": "", "azimuth": az, "elevation": el, "exposure": 0.0}
                 print(f"  ⚠ Renderball ({label}) failed: {exc}")
 
-        # ── Record row (paths relative to the CSV file's directory) ─────────
-        csv_dir = csv_path.parent
+        # ── Record row (filenames only — folder_path has the directory) ──────
         row = {
             "seed":        seed,
-            "folder_path": str(folder.relative_to(csv_dir)),
-            **{k: (str(Path(v).relative_to(csv_dir)) if v else "") for k, v in channels.items()},
-            **{f"renderball_{lbl}": (str(Path(p).relative_to(csv_dir)) if p else "")
-               for lbl, p in rb_paths.items()},
+            "folder_path": str(folder.relative_to(csv_path.parent)),
+            **{k: (Path(v).name if v else "") for k, v in channels.items()},
         }
+        for lbl, info in rb_info.items():
+            row[f"renderball_{lbl}"] = Path(info["path"]).name if info["path"] else ""
+            row[f"renderball_{lbl}_azimuth"] = info["azimuth"]
+            row[f"renderball_{lbl}_elevation"] = info["elevation"]
+            row[f"renderball_{lbl}_exposure"] = round(info["exposure"], 4)
         all_rows.append(row)
         existing_seeds.add(seed)
 

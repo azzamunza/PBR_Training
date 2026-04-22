@@ -625,8 +625,7 @@ class PBRDatasetGUI:
                     {"label": lbl, "azimuth_deg": r["azimuth"].get(), "elevation_deg": r["elevation"].get()})
 
         # CSV columns depend on channels + angles
-        gen.CSV_COLUMNS = ["seed", "folder_path"] + gen.CHANNEL_NAMES + \
-                          [f"renderball_{a['label']}" for a in gen.RENDERBALL_ANGLES]
+        gen.CSV_COLUMNS = gen._build_csv_columns()
 
         # Force re-init GPU renderer with new settings
         gen._gpu_pt = None
@@ -742,7 +741,7 @@ class PBRDatasetGUI:
                     return
 
                 channels = gen.discover_channels(seed)
-                img_path = gen.render_sphere_preview(
+                img_path, _ = gen.render_sphere_preview(
                     channels, seed, azimuth_deg=25.0, suffix="test")
 
                 gen.OUTPUT_ROOT = orig_root
@@ -751,7 +750,8 @@ class PBRDatasetGUI:
                 self.root.after(0, lambda: self.gen_status.config(
                     text=f"Test render complete (seed {seed})."))
             except Exception as e:
-                self.root.after(0, lambda: self.gen_status.config(text=f"Error: {e}"))
+                err_msg = str(e)
+                self.root.after(0, lambda: self.gen_status.config(text=f"Error: {err_msg}"))
             finally:
                 self._running = False
 
@@ -809,14 +809,14 @@ class PBRDatasetGUI:
                 # Render with Dark.hdr first
                 self.root.after(0, lambda: self.gen_status.config(
                     text="Rendering with Dark.hdr..."))
-                img_dark = gen.render_sphere_preview(
+                img_dark, _ = gen.render_sphere_preview(
                     channels, seed, azimuth_deg=25.0, suffix="dark",
                     env_override=dark_hdr)
 
                 # Render with Bright.hdr second
                 self.root.after(0, lambda: self.gen_status.config(
                     text="Rendering with Bright.hdr..."))
-                img_bright = gen.render_sphere_preview(
+                img_bright, _ = gen.render_sphere_preview(
                     channels, seed, azimuth_deg=25.0, suffix="bright",
                     env_override=bright_hdr)
 
@@ -829,7 +829,8 @@ class PBRDatasetGUI:
                 self.root.after(0, lambda: self.gen_status.config(
                     text=f"Dual HDR test complete (seed {seed})."))
             except Exception as e:
-                self.root.after(0, lambda: self.gen_status.config(text=f"Error: {e}"))
+                err_msg = str(e)
+                self.root.after(0, lambda: self.gen_status.config(text=f"Error: {err_msg}"))
             finally:
                 self._running = False
 
@@ -999,7 +1000,8 @@ class PBRDatasetGUI:
                     self._update_total_label(),
                 ))
             except Exception as e:
-                self.root.after(0, lambda: self.search_status.config(text=f"Error: {e}"))
+                err_msg = str(e)
+                self.root.after(0, lambda: self.search_status.config(text=f"Error: {err_msg}"))
             finally:
                 self._running = False
                 self._cancel = False
@@ -1097,33 +1099,32 @@ class PBRDatasetGUI:
                             found_ch = [k for k, v in channels.items() if v]
 
                             # Render shaderball previews
-                            rb_paths = {}
+                            rb_info = {}
                             for angle_cfg in gen.RENDERBALL_ANGLES:
                                 label = angle_cfg["label"]
+                                az = angle_cfg["azimuth_deg"]
+                                el = angle_cfg.get("elevation_deg", 38.0)
                                 try:
-                                    p = gen.render_sphere_preview(
+                                    p, exposure = gen.render_sphere_preview(
                                         channels, seed,
-                                        azimuth_deg=angle_cfg["azimuth_deg"],
+                                        azimuth_deg=az,
+                                        elevation_deg=el,
                                         suffix=label)
-                                    rb_paths[label] = p
+                                    rb_info[label] = {"path": p, "azimuth": az, "elevation": el, "exposure": exposure}
                                 except Exception:
-                                    rb_paths[label] = ""
+                                    rb_info[label] = {"path": "", "azimuth": az, "elevation": el, "exposure": 0.0}
 
-                            csv_dir = csv_path.parent
                             row = {
                                 "seed": seed,
-                                "folder_path": str(out_dir.relative_to(csv_dir)),
+                                "folder_path": str(out_dir.relative_to(csv_path.parent)),
                             }
                             for k, v in channels.items():
-                                try:
-                                    row[k] = str(Path(v).relative_to(csv_dir)) if v else ""
-                                except ValueError:
-                                    row[k] = v
-                            for lbl, p in rb_paths.items():
-                                try:
-                                    row[f"renderball_{lbl}"] = str(Path(p).relative_to(csv_dir)) if p else ""
-                                except ValueError:
-                                    row[f"renderball_{lbl}"] = p
+                                row[k] = Path(v).name if v else ""
+                            for lbl, info in rb_info.items():
+                                row[f"renderball_{lbl}"] = Path(info["path"]).name if info["path"] else ""
+                                row[f"renderball_{lbl}_azimuth"] = info["azimuth"]
+                                row[f"renderball_{lbl}_elevation"] = info["elevation"]
+                                row[f"renderball_{lbl}_exposure"] = round(info["exposure"], 4)
 
                             all_rows.append(row)
                             existing_seeds.add(seed)
@@ -1154,7 +1155,8 @@ class PBRDatasetGUI:
                     self._refresh_csv_info(),
                 ))
             except Exception as e:
-                self.root.after(0, lambda: self.gen_status.config(text=f"Error: {e}"))
+                err_msg = str(e)
+                self.root.after(0, lambda: self.gen_status.config(text=f"Error: {err_msg}"))
             finally:
                 self._running = False
                 self._cancel = False
