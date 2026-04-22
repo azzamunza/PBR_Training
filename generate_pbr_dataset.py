@@ -370,8 +370,9 @@ def _init_gpu_renderer():
         specular_ior=1.5,
     )
 
-    # Paths to StandardShaderBall assets in PBR-Python-Shaderball-Renderer
-    assets_dir = os.path.join(PBR_RENDERER_PATH, "assets")
+    # Paths to StandardShaderBall assets (local repository)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_dir = os.path.join(script_dir, "shaderball_assets")
     sb_dir = os.path.join(assets_dir, "standard-shader-ball")
     # Prefer .obj (user-unwrapped UVs) over .glb (partial UVs from OpenPBR)
     surface_obj = os.path.join(sb_dir, "openpbr_surface_full.obj")
