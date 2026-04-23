@@ -1,18 +1,13 @@
-# HybridPBRDataset
+## Additional Sections
 
-This section provides information about the HybridPBRDataset, which is designed to facilitate easy loading and use in various applications.
+### HybridPBRDataset
+CSV-driven dataset that collects per-sample PBR maps, renderballs, and conditioning scalars; returns (input_image, cond_tensor, pbr_targets).
 
-## CSV-driven Dataset Loading
+### Refactored PBRNet
+Now accepts image + conditioning scalars with cond_encoder, fuse layer, and fused features for texture and scalar heads.
 
-The HybridPBRDataset supports loading data from CSV files, making it easier to manage and use large datasets with structured information.
+### Training Pipeline
+Includes LPIPS loss, updated PBR parameter registry with standardized keys, texture resolution increased to 256.
 
-## Refactored PBRNet
-
-The PBRNet has been refactored to include conditioning scalars, enhancing its flexibility and performance in different scenarios.
-
-# Training Notebook Features
-
-The training notebook includes several key features:
-- Easy setup and execution of experiments.
-- Visualizations for monitoring training progress.
-- Support for custom hyperparameter tuning and adjustments.
+### Dataset Requirements
+Dataset.csv must be generated using generate_pbr_dataset.py.
