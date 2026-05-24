@@ -23,6 +23,14 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import numpy as np
 from PIL import Image, ImageTk
 
+# ── GCS Upload dependencies ────────────────────────────────────────────────
+try:
+    from google.cloud import storage
+    from google.oauth2 import service_account
+    GCS_AVAILABLE = True
+except ImportError:
+    GCS_AVAILABLE = False
+
 # ── Ensure the PBR renderer is on the path ───────────────────────────────────
 PBR_RENDERER_PATH = r"F:\!_GitHub_Rep\PBR-Python-Shaderball-Renderer"
 if PBR_RENDERER_PATH not in sys.path:
@@ -36,6 +44,10 @@ import generate_pbr_dataset as gen
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_render_cache")
 SBSAR_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sbsar_library.json")
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "GUI.config")
+
+# ── GCS Configuration ──────────────────────────────────────────────────────
+GCS_BUCKET_NAME = "entangledneurons"
+GCS_CREDENTIALS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gcs_credentials.json")  # Outside repo
 
 ALL_CHANNELS = [
     "basecolor", "normal", "roughness", "metallic", "height",
@@ -165,6 +177,7 @@ class PBRDatasetGUI:
         # Running state
         self._running = False
         self._cancel = False
+        self._upload_running = False
 
     # ──────────────────────────────────────────────────────────────────────
     #  Preset / Config helpers
@@ -489,6 +502,23 @@ class PBRDatasetGUI:
         self.btn_cancel = ttk.Button(gen_btn_row, text="Cancel", state="disabled",
                                      command=self._cancel_generation)
         self.btn_cancel.pack(side="left", padx=4)
+
+        # ── Section: Cloud Upload ──────────────────────────────────────────
+        if GCS_AVAILABLE:
+            sec_upload = ttk.LabelFrame(parent, text="Cloud Upload to GCS", padding=8)
+            sec_upload.pack(fill="x", **pad)
+
+            self.upload_status = ttk.Label(sec_upload, text="Ready to upload to gs://entangledneurons")
+            self.upload_status.pack(anchor="w", pady=(0, 4))
+
+            upload_btn_row = ttk.Frame(sec_upload)
+            upload_btn_row.pack(fill="x", pady=(4, 0))
+            self.btn_upload = ttk.Button(upload_btn_row, text="Compress & Upload Dataset",
+                                         command=self._upload_to_gcs)
+            self.btn_upload.pack(side="left", padx=4)
+            self.btn_upload_cancel = ttk.Button(upload_btn_row, text="Cancel Upload", state="disabled",
+                                                command=self._cancel_upload)
+            self.btn_upload_cancel.pack(side="left", padx=4)
 
         self._update_total_label()
 
@@ -1170,6 +1200,101 @@ class PBRDatasetGUI:
     def _cancel_generation(self):
         self._cancel = True
         self.gen_status.config(text="Cancelling...")
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  GCS Upload
+    # ──────────────────────────────────────────────────────────────────────
+    def _upload_to_gcs(self):
+        if not GCS_AVAILABLE:
+            messagebox.showerror("Error", "Google Cloud Storage libraries not installed.\nInstall with: pip install google-cloud-storage")
+            return
+
+        if not os.path.exists(GCS_CREDENTIALS_PATH):
+            messagebox.showerror("Error", f"GCS credentials not found at: {GCS_CREDENTIALS_PATH}\nPlease place your service account JSON key there.")
+            return
+
+        # Check if dataset exists
+        dataset_dir = Path(self.v_output_root.get()) / "PBR_Dataset"
+        shaderball_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "shaderball_assets"
+        csv_path = Path(self.v_output_root.get()) / "dataset.csv"
+
+        if not dataset_dir.exists():
+            messagebox.showerror("Error", f"Dataset directory not found: {dataset_dir}")
+            return
+        if not shaderball_dir.exists():
+            messagebox.showerror("Error", f"Shaderball assets not found: {shaderball_dir}")
+            return
+        if not csv_path.exists():
+            messagebox.showerror("Error", f"Dataset CSV not found: {csv_path}")
+            return
+
+        self._upload_running = True
+        self.btn_upload.config(state="disabled")
+        self.btn_upload_cancel.config(state="normal")
+
+        def _do_upload():
+            try:
+                self.root.after(0, lambda: self.upload_status.config(text="Initializing GCS client..."))
+
+                # Initialize GCS client
+                credentials = service_account.Credentials.from_service_account_file(GCS_CREDENTIALS_PATH)
+                client = storage.Client(credentials=credentials)
+                bucket = client.bucket(GCS_BUCKET_NAME)
+
+                # Create compressed archive
+                self.root.after(0, lambda: self.upload_status.config(text="Compressing dataset..."))
+                archive_name = f"dataset_{int(time.time())}.tar.gz"
+                archive_path = Path(tempfile.gettempdir()) / archive_name
+
+                # Use tar command for compression
+                import subprocess
+                dataset_path = str(dataset_dir)
+                shaderball_path = str(shaderball_dir)
+
+                # Create tar.gz archive
+                result = subprocess.run([
+                    "tar", "-czf", str(archive_path),
+                    "-C", str(dataset_dir.parent), "PBR_Dataset",
+                    "-C", str(shaderball_dir.parent), "shaderball_assets"
+                ], capture_output=True, text=True)
+
+                if result.returncode != 0:
+                    raise Exception(f"Tar compression failed: {result.stderr}")
+
+                archive_size = archive_path.stat().st_size / (1024 * 1024 * 1024)  # GB
+                self.root.after(0, lambda: self.upload_status.config(
+                    text=f"Compressed to {archive_size:.2f}GB. Uploading archive..."))
+
+                # Upload archive
+                blob = bucket.blob(f"datasets/{archive_name}")
+                blob.upload_from_filename(str(archive_path))
+
+                # Upload CSV
+                self.root.after(0, lambda: self.upload_status.config(text="Uploading CSV metadata..."))
+                csv_blob = bucket.blob("dataset.csv")
+                csv_blob.upload_from_filename(str(csv_path))
+
+                # Clean up
+                archive_path.unlink()
+
+                self.root.after(0, lambda: self.upload_status.config(
+                    text=f"Upload complete! Files available at gs://{GCS_BUCKET_NAME}/"))
+
+            except Exception as e:
+                err_msg = str(e)
+                self.root.after(0, lambda: self.upload_status.config(text=f"Upload failed: {err_msg}"))
+            finally:
+                self._upload_running = False
+                self.root.after(0, lambda: (
+                    self.btn_upload.config(state="normal"),
+                    self.btn_upload_cancel.config(state="disabled"),
+                ))
+
+        threading.Thread(target=_do_upload, daemon=True).start()
+
+    def _cancel_upload(self):
+        self._upload_running = False
+        self.upload_status.config(text="Upload cancelled.")
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
